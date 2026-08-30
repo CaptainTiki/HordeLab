@@ -1,15 +1,16 @@
 extends Node3D
+class_name BuildController
 
 @export var camera_path: NodePath
 @export var grid_path: NodePath
 
-@onready var camera: Camera3D = get_node(camera_path)
-@onready var grid: BattlefieldGrid = get_node(grid_path)
+@onready var camera: Camera3D = get_node(camera_path) as Camera3D
+@onready var grid: BattlefieldGrid = get_node(grid_path) as BattlefieldGrid
 
-var placement_active := false
+var placement_active: bool = false
 var ghost: MeshInstance3D
-var ghost_cell := Vector2i(-1, -1)
-var ghost_valid := false
+var ghost_cell: Vector2i = Vector2i(-1, -1)
+var ghost_valid: bool = false
 
 var valid_material: StandardMaterial3D
 var invalid_material: StandardMaterial3D
@@ -22,7 +23,7 @@ func _ready() -> void:
 
 	ghost = MeshInstance3D.new()
 	ghost.name = "WallGhost"
-	var mesh := BoxMesh.new()
+	var mesh: BoxMesh = BoxMesh.new()
 	mesh.size = Vector3(grid.cell_size * 0.9, 2.2, grid.cell_size * 0.9)
 	ghost.mesh = mesh
 	ghost.visible = false
@@ -60,8 +61,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 
 func _update_ghost(screen_position: Vector2) -> void:
-	var world_position := _screen_to_ground(screen_position)
-	if world_position == null:
+	var world_position: Vector3 = _screen_to_ground(screen_position)
+	if not world_position.is_finite():
 		ghost.visible = false
 		ghost_valid = false
 		return
@@ -69,18 +70,18 @@ func _update_ghost(screen_position: Vector2) -> void:
 	ghost_cell = grid.world_to_cell(world_position)
 	ghost_valid = grid.is_valid_cell(ghost_cell) and not grid.is_blocked(ghost_cell)
 	ghost.visible = true
-	var snapped := grid.cell_to_world(ghost_cell)
+	var snapped: Vector3 = grid.cell_to_world(ghost_cell)
 	ghost.global_position = Vector3(snapped.x, 1.1, snapped.z)
 	ghost.material_override = valid_material if ghost_valid else invalid_material
 
-func _screen_to_ground(screen_position: Vector2) -> Variant:
-	var ray_origin := camera.project_ray_origin(screen_position)
-	var ray_direction := camera.project_ray_normal(screen_position)
+func _screen_to_ground(screen_position: Vector2) -> Vector3:
+	var ray_origin: Vector3 = camera.project_ray_origin(screen_position)
+	var ray_direction: Vector3 = camera.project_ray_normal(screen_position)
 	if absf(ray_direction.y) < 0.0001:
-		return null
-	var distance := -ray_origin.y / ray_direction.y
+		return Vector3.INF
+	var distance: float = -ray_origin.y / ray_direction.y
 	if distance < 0.0:
-		return null
+		return Vector3.INF
 	return ray_origin + ray_direction * distance
 
 func _place_wall() -> void:
@@ -89,13 +90,13 @@ func _place_wall() -> void:
 
 	grid.set_blocked(ghost_cell, true)
 
-	var wall := MeshInstance3D.new()
+	var wall: MeshInstance3D = MeshInstance3D.new()
 	wall.name = "Wall_%d_%d" % [ghost_cell.x, ghost_cell.y]
-	var mesh := BoxMesh.new()
+	var mesh: BoxMesh = BoxMesh.new()
 	mesh.size = Vector3(grid.cell_size * 0.9, 2.2, grid.cell_size * 0.9)
 	wall.mesh = mesh
 	wall.material_override = wall_material
-	var snapped := grid.cell_to_world(ghost_cell)
+	var snapped: Vector3 = grid.cell_to_world(ghost_cell)
 	wall.global_position = Vector3(snapped.x, 1.1, snapped.z)
 	add_child(wall)
 
@@ -108,7 +109,7 @@ func _cancel_placement() -> void:
 	ghost_valid = false
 
 func _make_material(color: Color, transparent: bool) -> StandardMaterial3D:
-	var material := StandardMaterial3D.new()
+	var material: StandardMaterial3D = StandardMaterial3D.new()
 	material.albedo_color = color
 	material.roughness = 0.8
 	if transparent:
