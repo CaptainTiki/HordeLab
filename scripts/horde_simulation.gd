@@ -4,6 +4,7 @@ class_name HordeSimulation
 const INVALID_CELL: Vector2i = Vector2i(-1, -1)
 const MAX_AGENT_STEP_SECONDS: float = 0.15
 const MAX_CELL_TRANSITIONS_PER_UPDATE: int = 4
+const MAX_PRESENTATION_EXTRAPOLATION_SECONDS: float = 0.18
 
 @export var grid_path: NodePath
 @export var flow_field_path: NodePath
@@ -15,8 +16,8 @@ const MAX_CELL_TRANSITIONS_PER_UPDATE: int = 4
 @export var spawn_extents: Vector2 = Vector2(16.0, 20.0)
 @export var agent_radius: float = 0.32
 @export var agent_height: float = 1.1
-@export var density_weight: int = 7
-@export var path_weight: int = 12
+@export var density_weight: int = 16
+@export var path_weight: int = 1
 @export var lane_offset_fraction: float = 0.28
 @export var target_arrival_distance: float = 0.08
 
@@ -60,10 +61,6 @@ func _process(delta: float) -> void:
 
 	var desired_updates: float = float(agent_count) * simulation_hz * delta
 	work_accumulator += desired_updates
-
-	# Never allow an unlimited backlog to build up. If the renderer cannot keep
-	# pace with the requested simulation rate, the scheduler intentionally lowers
-	# per-agent update frequency instead of creating a giant catch-up hitch.
 	work_accumulator = minf(work_accumulator, float(maxi(agent_count, 1)))
 
 	var requested_agents: int = floori(work_accumulator)
@@ -122,9 +119,6 @@ func _simulate_agent(index: int, step_delta: float) -> void:
 	var remaining_distance: float = move_speed * step_delta
 	var transitions: int = 0
 
-	# Consume the full movement budget. Reaching a cell target must not cost an
-	# entire scheduler update, otherwise low update rates create a visible pause
-	# at every grid cell boundary.
 	while remaining_distance > 0.0001 and transitions < MAX_CELL_TRANSITIONS_PER_UPDATE:
 		if current_cell == flow_field.goal_cell and target_cells[index] == INVALID_CELL:
 			break
@@ -142,7 +136,6 @@ func _simulate_agent(index: int, step_delta: float) -> void:
 
 		var offset: Vector3 = target - position
 		var distance: float = offset.length()
-
 		if distance <= target_arrival_distance:
 			position = target
 			target_cells[index] = INVALID_CELL
@@ -161,22 +154,20 @@ func _simulate_agent(index: int, step_delta: float) -> void:
 			target_cells[index] = INVALID_CELL
 			transitions += 1
 			continue
-
 		break
 
 	positions[index] = position
 	_update_agent_cell(index, starting_cell, current_cell)
 
-	# Presentation is delayed/smoothed entirely on the GPU. INSTANCE_CUSTOM uses:
-	# x/z = offset back to the previous authoritative position
-	# y   = this agent's actual time between simulation updates
-	# w   = presentation timestamp of this update
-	var presentation_offset: Vector3 = old_position - position
+	var velocity: Vector3 = Vector3.ZERO
+	if step_delta > 0.0001:
+		velocity = (position - old_position) / step_delta
+	var extrapolation_seconds: float = clampf(step_delta * 1.35, 0.03, MAX_PRESENTATION_EXTRAPOLATION_SECONDS)
 	multimesh.set_instance_transform(index, Transform3D(Basis.IDENTITY, position))
 	multimesh.set_instance_custom_data(index, Color(
-		presentation_offset.x,
-		clampf(step_delta, 0.016, MAX_AGENT_STEP_SECONDS),
-		presentation_offset.z,
+		velocity.x,
+		velocity.z,
+		extrapolation_seconds,
 		presentation_time
 	))
 
@@ -210,13 +201,18 @@ func _choose_next_cell(agent_index: int, current_cell: Vector2i) -> Vector2i:
 		if not flow_field.can_traverse(current_cell, neighbor):
 			continue
 		var neighbor_cost: int = flow_field.get_cost(neighbor)
-		if neighbor_cost >= current_cost:
+		if neighbor_cost == FlowField.UNREACHABLE:
+			continue
+
+		var step_cost: int = flow_field.get_step_cost(direction)
+		var route_cost: int = neighbor_cost + step_cost
+		if route_cost > current_cost + FlowField.DIAGONAL_COST:
 			continue
 
 		var neighbor_index: int = _cell_index(neighbor)
 		var occupancy: int = density[neighbor_index] + reservations[neighbor_index]
 		var tie_break: int = _stable_jitter(agent_index, neighbor)
-		var score: int = neighbor_cost * path_weight + occupancy * density_weight + tie_break
+		var score: int = route_cost * path_weight + occupancy * density_weight + tie_break
 		if score < best_score:
 			best_score = score
 			best_cell = neighbor
@@ -249,9 +245,9 @@ uniform vec4 agent_color : source_color = vec4(0.88, 0.13, 0.10, 1.0);
 uniform float presentation_time = 0.0;
 
 void vertex() {
-	float duration = clamp(INSTANCE_CUSTOM.y, 0.016, 0.15);
-	float progress = clamp((presentation_time - INSTANCE_CUSTOM.w) / duration, 0.0, 1.0);
-	VERTEX += vec3(INSTANCE_CUSTOM.x, 0.0, INSTANCE_CUSTOM.z) * (1.0 - progress);
+	float elapsed = clamp(presentation_time - INSTANCE_CUSTOM.w, 0.0, INSTANCE_CUSTOM.z);
+	vec2 velocity = INSTANCE_CUSTOM.xy;
+	VERTEX += vec3(velocity.x, 0.0, velocity.y) * elapsed;
 }
 
 void fragment() {
@@ -315,4 +311,4 @@ func _spawn_agents() -> void:
 func _upload_all_transforms() -> void:
 	for index: int in range(positions.size()):
 		multimesh.set_instance_transform(index, Transform3D(Basis.IDENTITY, positions[index]))
-		multimesh.set_instance_custom_data(index, Color(0.0, 1.0 / maxf(simulation_hz, 1.0), 0.0, presentation_time))
+		multimesh.set_instance_custom_data(index, Color(0.0, 0.0, 0.0, presentation_time))
