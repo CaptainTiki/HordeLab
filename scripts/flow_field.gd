@@ -2,11 +2,15 @@ extends Node
 class_name FlowField
 
 const UNREACHABLE: int = 1_000_000_000
-const CARDINAL_DIRS: Array[Vector2i] = [
+const NEIGHBOR_DIRS: Array[Vector2i] = [
 	Vector2i(1, 0),
 	Vector2i(-1, 0),
 	Vector2i(0, 1),
 	Vector2i(0, -1),
+	Vector2i(1, 1),
+	Vector2i(1, -1),
+	Vector2i(-1, 1),
+	Vector2i(-1, -1),
 ]
 
 @export var grid_path: NodePath
@@ -41,9 +45,9 @@ func _rebuild() -> void:
 		read_index += 1
 		var current_cost: int = integration[_index(current)]
 
-		for direction: Vector2i in CARDINAL_DIRS:
+		for direction: Vector2i in NEIGHBOR_DIRS:
 			var neighbor: Vector2i = current + direction
-			if not grid.is_valid_cell(neighbor) or grid.is_blocked(neighbor):
+			if not can_traverse(current, neighbor):
 				continue
 			var neighbor_index: int = _index(neighbor)
 			if integration[neighbor_index] <= current_cost + 1:
@@ -51,24 +55,38 @@ func _rebuild() -> void:
 			integration[neighbor_index] = current_cost + 1
 			frontier.append(neighbor)
 
-func get_next_cell(cell: Vector2i) -> Vector2i:
+func get_cost(cell: Vector2i) -> int:
 	if not grid.is_valid_cell(cell):
-		return cell
-	var current_cost: int = integration[_index(cell)]
+		return UNREACHABLE
+	return integration[_index(cell)]
+
+func get_next_cell(cell: Vector2i) -> Vector2i:
+	var current_cost: int = get_cost(cell)
 	if current_cost == UNREACHABLE or current_cost == 0:
 		return cell
 
 	var best_cell: Vector2i = cell
 	var best_cost: int = current_cost
-	for direction: Vector2i in CARDINAL_DIRS:
+	for direction: Vector2i in NEIGHBOR_DIRS:
 		var neighbor: Vector2i = cell + direction
-		if not grid.is_valid_cell(neighbor) or grid.is_blocked(neighbor):
+		if not can_traverse(cell, neighbor):
 			continue
-		var neighbor_cost: int = integration[_index(neighbor)]
+		var neighbor_cost: int = get_cost(neighbor)
 		if neighbor_cost < best_cost:
 			best_cost = neighbor_cost
 			best_cell = neighbor
 	return best_cell
+
+func can_traverse(from_cell: Vector2i, to_cell: Vector2i) -> bool:
+	if not grid.is_valid_cell(to_cell) or grid.is_blocked(to_cell):
+		return false
+	var delta: Vector2i = to_cell - from_cell
+	if absi(delta.x) == 1 and absi(delta.y) == 1:
+		var side_x: Vector2i = from_cell + Vector2i(delta.x, 0)
+		var side_y: Vector2i = from_cell + Vector2i(0, delta.y)
+		if grid.is_blocked(side_x) or grid.is_blocked(side_y):
+			return false
+	return true
 
 func _index(cell: Vector2i) -> int:
 	return cell.y * grid.cells_x + cell.x
