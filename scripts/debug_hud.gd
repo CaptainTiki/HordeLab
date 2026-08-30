@@ -29,7 +29,7 @@ func _process(delta: float) -> void:
 		average_frame_ms = frame_time_accumulator_ms / float(sampled_frames)
 
 	var flow_state: String = "REBUILD" if flow_field.rebuild_in_progress else "READY"
-	text = "FPS: %d   Avg: %.2f ms   WORST: %.2f ms   Horde: %d   Slice: %.2f ms / %d agents   Worst slice: %.2f ms   Flow: %s   Last rebuild: %.1f ms / %d frames" % [
+	text = "FPS: %d   Avg: %.2f ms   WORST: %.2f ms   Horde: %d   Slice: %.2f ms / %d agents   Worst slice: %.2f ms   Agent Hz: %.1f   Flow: %s   Last rebuild: %.1f ms / %d frames" % [
 		Engine.get_frames_per_second(),
 		average_frame_ms,
 		worst_frame_ms,
@@ -37,6 +37,7 @@ func _process(delta: float) -> void:
 		horde.last_simulation_ms,
 		horde.agents_processed_last_frame,
 		worst_sim_ms,
+		horde.effective_updates_per_second,
 		flow_state,
 		flow_field.last_rebuild_ms,
 		flow_field.last_rebuild_frames,
