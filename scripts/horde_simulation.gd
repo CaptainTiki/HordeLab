@@ -3,6 +3,8 @@ class_name HordeSimulation
 
 const INVALID_CELL: Vector2i = Vector2i(-1, -1)
 const MAX_AGENT_STEP_SECONDS: float = 0.15
+const MIN_PRESENTATION_SECONDS: float = 0.016
+const MAX_PRESENTATION_SECONDS: float = 0.15
 
 @export var grid_path: NodePath
 @export var flow_field_path: NodePath
@@ -36,8 +38,10 @@ var last_simulation_ms: float = 0.0
 var effective_updates_per_second: float = 0.0
 var update_rate_accumulator: float = 0.0
 var updates_in_rate_window: int = 0
+var presentation_time: float = 0.0
 var multimesh_instance: MultiMeshInstance3D
 var multimesh: MultiMesh
+var presentation_material: ShaderMaterial
 var rng: RandomNumberGenerator = RandomNumberGenerator.new()
 
 func _ready() -> void:
@@ -52,6 +56,9 @@ func _ready() -> void:
 	_upload_all_transforms()
 
 func _process(delta: float) -> void:
+	presentation_time += delta
+	_update_presentation_shader()
+
 	var desired_updates: float = float(agent_count) * simulation_hz * delta
 	work_accumulator += desired_updates
 
@@ -85,6 +92,14 @@ func _process(delta: float) -> void:
 	last_simulation_ms = float(Time.get_ticks_usec() - start_usec) / 1000.0
 	_update_rate_stats(delta, agents_processed_last_frame)
 
+func _update_presentation_shader() -> void:
+	if presentation_material == null:
+		return
+	var presentation_seconds: float = 1.0 / maxf(effective_updates_per_second, 1.0)
+	presentation_seconds = clampf(presentation_seconds, MIN_PRESENTATION_SECONDS, MAX_PRESENTATION_SECONDS)
+	presentation_material.set_shader_parameter("presentation_time", presentation_time)
+	presentation_material.set_shader_parameter("interpolation_duration", presentation_seconds)
+
 func _update_rate_stats(delta: float, updates: int) -> void:
 	update_rate_accumulator += delta
 	updates_in_rate_window += updates
@@ -98,7 +113,8 @@ func _update_rate_stats(delta: float, updates: int) -> void:
 	updates_in_rate_window = 0
 
 func _simulate_agent(index: int, step_delta: float) -> void:
-	var position: Vector3 = positions[index]
+	var old_position: Vector3 = positions[index]
+	var position: Vector3 = old_position
 	var current_cell: Vector2i = agent_cells[index]
 	if current_cell == flow_field.goal_cell and target_cells[index] == INVALID_CELL:
 		return
@@ -125,7 +141,19 @@ func _simulate_agent(index: int, step_delta: float) -> void:
 
 	positions[index] = position
 	_update_agent_cell(index, current_cell, grid.world_to_cell(position))
+
+	# The simulation moves in scheduled chunks, but presentation is interpolated
+	# entirely on the GPU. The instance transform is the newest authoritative
+	# position; custom data stores the offset back to the previous position plus
+	# the presentation timestamp when this simulation update occurred.
+	var presentation_offset: Vector3 = old_position - position
 	multimesh.set_instance_transform(index, Transform3D(Basis.IDENTITY, position))
+	multimesh.set_instance_custom_data(index, Color(
+		presentation_offset.x,
+		presentation_offset.y,
+		presentation_offset.z,
+		presentation_time
+	))
 
 func _update_agent_cell(index: int, old_cell: Vector2i, new_cell: Vector2i) -> void:
 	if new_cell == old_cell:
@@ -188,19 +216,40 @@ func _cell_index(cell: Vector2i) -> int:
 	return cell.y * grid.cells_x + cell.x
 
 func _build_renderer() -> void:
-	var material: StandardMaterial3D = StandardMaterial3D.new()
-	material.albedo_color = Color(0.88, 0.13, 0.10, 1.0)
-	material.roughness = 0.7
+	var shader: Shader = Shader.new()
+	shader.code = """
+shader_type spatial;
+
+uniform vec4 agent_color : source_color = vec4(0.88, 0.13, 0.10, 1.0);
+uniform float presentation_time = 0.0;
+uniform float interpolation_duration = 0.1;
+
+void vertex() {
+	float duration = max(interpolation_duration, 0.001);
+	float progress = clamp((presentation_time - INSTANCE_CUSTOM.w) / duration, 0.0, 1.0);
+	float smooth_progress = progress * progress * (3.0 - 2.0 * progress);
+	VERTEX += INSTANCE_CUSTOM.xyz * (1.0 - smooth_progress);
+}
+
+void fragment() {
+	ALBEDO = agent_color.rgb;
+	ROUGHNESS = 0.7;
+}
+"""
+
+	presentation_material = ShaderMaterial.new()
+	presentation_material.shader = shader
 
 	var mesh: CapsuleMesh = CapsuleMesh.new()
 	mesh.radius = agent_radius
 	mesh.height = agent_height
 	mesh.radial_segments = 8
 	mesh.rings = 2
-	mesh.material = material
+	mesh.material = presentation_material
 
 	multimesh = MultiMesh.new()
 	multimesh.transform_format = MultiMesh.TRANSFORM_3D
+	multimesh.use_custom_data = true
 	multimesh.instance_count = maxi(agent_count, 0)
 	multimesh.mesh = mesh
 
@@ -243,3 +292,4 @@ func _spawn_agents() -> void:
 func _upload_all_transforms() -> void:
 	for index: int in range(positions.size()):
 		multimesh.set_instance_transform(index, Transform3D(Basis.IDENTITY, positions[index]))
+		multimesh.set_instance_custom_data(index, Color(0.0, 0.0, 0.0, presentation_time))
