@@ -1,6 +1,8 @@
 extends Node3D
 class_name HordeSimulation
 
+const INVALID_CELL: Vector2i = Vector2i(-1, -1)
+
 @export var grid_path: NodePath
 @export var flow_field_path: NodePath
 @export var agent_count: int = 1000
@@ -12,13 +14,18 @@ class_name HordeSimulation
 @export var density_weight: int = 7
 @export var path_weight: int = 12
 @export var lane_offset_fraction: float = 0.28
+@export var density_update_interval: float = 0.10
+@export var target_arrival_distance: float = 0.08
 
 @onready var grid: BattlefieldGrid = get_node(grid_path) as BattlefieldGrid
 @onready var flow_field: FlowField = get_node(flow_field_path) as FlowField
 
 var positions: Array[Vector3] = []
 var lane_offsets: Array[Vector2] = []
+var target_cells: Array[Vector2i] = []
 var density: PackedInt32Array = PackedInt32Array()
+var reservations: PackedInt32Array = PackedInt32Array()
+var density_timer: float = 0.0
 var multimesh_instance: MultiMeshInstance3D
 var multimesh: MultiMesh
 var rng: RandomNumberGenerator = RandomNumberGenerator.new()
@@ -28,31 +35,47 @@ func _ready() -> void:
 	if not grid.is_node_ready():
 		await grid.ready
 	density.resize(grid.cells_x * grid.cells_z)
+	reservations.resize(grid.cells_x * grid.cells_z)
 	_build_renderer()
 	_spawn_agents()
+	_rebuild_density()
 	_upload_all_transforms()
 
 func _process(delta: float) -> void:
-	_rebuild_density()
-	var max_step: float = move_speed * delta
+	density_timer += delta
+	if density_timer >= density_update_interval:
+		density_timer = fmod(density_timer, density_update_interval)
+		_rebuild_density()
 
+	var max_step: float = move_speed * delta
 	for index: int in range(positions.size()):
 		var position: Vector3 = positions[index]
 		var current_cell: Vector2i = grid.world_to_cell(position)
-		if current_cell != flow_field.goal_cell:
-			var next_cell: Vector2i = _choose_next_cell(index, current_cell)
-			if next_cell != current_cell:
-				var target: Vector3 = grid.cell_to_world(next_cell)
-				var lane_offset: Vector2 = lane_offsets[index]
-				target.x += lane_offset.x
-				target.z += lane_offset.y
-				target.y = position.y
-				var offset: Vector3 = target - position
-				var distance: float = offset.length()
-				if distance > 0.001:
-					var step: float = minf(max_step, distance)
-					position += offset / distance * step
-					positions[index] = position
+		if current_cell == flow_field.goal_cell:
+			multimesh.set_instance_transform(index, Transform3D(Basis.IDENTITY, position))
+			continue
+
+		var target_cell: Vector2i = target_cells[index]
+		if target_cell == INVALID_CELL or not flow_field.can_traverse(current_cell, target_cell):
+			target_cell = _choose_next_cell(index, current_cell)
+			target_cells[index] = target_cell
+
+		if target_cell != current_cell:
+			var target: Vector3 = grid.cell_to_world(target_cell)
+			var lane_offset: Vector2 = lane_offsets[index]
+			target.x += lane_offset.x
+			target.z += lane_offset.y
+			target.y = position.y
+			var offset: Vector3 = target - position
+			var distance: float = offset.length()
+			if distance <= target_arrival_distance:
+				position = target
+				target_cells[index] = INVALID_CELL
+			elif distance > 0.001:
+				var step: float = minf(max_step, distance)
+				position += offset / distance * step
+			positions[index] = position
+
 		multimesh.set_instance_transform(index, Transform3D(Basis.IDENTITY, position))
 
 func _choose_next_cell(agent_index: int, current_cell: Vector2i) -> Vector2i:
@@ -71,17 +94,21 @@ func _choose_next_cell(agent_index: int, current_cell: Vector2i) -> Vector2i:
 		if neighbor_cost >= current_cost:
 			continue
 
-		var occupancy: int = density[_cell_index(neighbor)]
+		var neighbor_index: int = _cell_index(neighbor)
+		var occupancy: int = density[neighbor_index] + reservations[neighbor_index]
 		var tie_break: int = _stable_jitter(agent_index, neighbor)
 		var score: int = neighbor_cost * path_weight + occupancy * density_weight + tie_break
 		if score < best_score:
 			best_score = score
 			best_cell = neighbor
 
+	if best_cell != current_cell:
+		reservations[_cell_index(best_cell)] += 1
 	return best_cell
 
 func _rebuild_density() -> void:
 	density.fill(0)
+	reservations.fill(0)
 	for position: Vector3 in positions:
 		var cell: Vector2i = grid.world_to_cell(position)
 		if grid.is_valid_cell(cell):
@@ -122,8 +149,10 @@ func _build_renderer() -> void:
 func _spawn_agents() -> void:
 	positions.clear()
 	lane_offsets.clear()
+	target_cells.clear()
 	positions.resize(maxi(agent_count, 0))
 	lane_offsets.resize(maxi(agent_count, 0))
+	target_cells.resize(maxi(agent_count, 0))
 	var lane_extent: float = grid.cell_size * lane_offset_fraction
 
 	for index: int in range(positions.size()):
@@ -134,6 +163,7 @@ func _spawn_agents() -> void:
 		if not grid.is_valid_cell(cell) or grid.is_blocked(cell):
 			position = spawn_center
 		positions[index] = position
+		target_cells[index] = INVALID_CELL
 		lane_offsets[index] = Vector2(
 			rng.randf_range(-lane_extent, lane_extent),
 			rng.randf_range(-lane_extent, lane_extent)
