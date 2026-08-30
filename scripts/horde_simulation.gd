@@ -9,30 +9,43 @@ class_name HordeSimulation
 @export var spawn_extents: Vector2 = Vector2(16.0, 20.0)
 @export var agent_radius: float = 0.32
 @export var agent_height: float = 1.1
+@export var density_weight: int = 7
+@export var path_weight: int = 12
+@export var lane_offset_fraction: float = 0.28
 
 @onready var grid: BattlefieldGrid = get_node(grid_path) as BattlefieldGrid
 @onready var flow_field: FlowField = get_node(flow_field_path) as FlowField
 
 var positions: Array[Vector3] = []
+var lane_offsets: Array[Vector2] = []
+var density: PackedInt32Array = PackedInt32Array()
 var multimesh_instance: MultiMeshInstance3D
 var multimesh: MultiMesh
 var rng: RandomNumberGenerator = RandomNumberGenerator.new()
 
 func _ready() -> void:
 	rng.seed = 1337
+	if not grid.is_node_ready():
+		await grid.ready
+	density.resize(grid.cells_x * grid.cells_z)
 	_build_renderer()
 	_spawn_agents()
 	_upload_all_transforms()
 
 func _process(delta: float) -> void:
+	_rebuild_density()
 	var max_step: float = move_speed * delta
+
 	for index: int in range(positions.size()):
 		var position: Vector3 = positions[index]
 		var current_cell: Vector2i = grid.world_to_cell(position)
 		if current_cell != flow_field.goal_cell:
-			var next_cell: Vector2i = flow_field.get_next_cell(current_cell)
+			var next_cell: Vector2i = _choose_next_cell(index, current_cell)
 			if next_cell != current_cell:
 				var target: Vector3 = grid.cell_to_world(next_cell)
+				var lane_offset: Vector2 = lane_offsets[index]
+				target.x += lane_offset.x
+				target.z += lane_offset.y
 				target.y = position.y
 				var offset: Vector3 = target - position
 				var distance: float = offset.length()
@@ -41,6 +54,47 @@ func _process(delta: float) -> void:
 					position += offset / distance * step
 					positions[index] = position
 		multimesh.set_instance_transform(index, Transform3D(Basis.IDENTITY, position))
+
+func _choose_next_cell(agent_index: int, current_cell: Vector2i) -> Vector2i:
+	var current_cost: int = flow_field.get_cost(current_cell)
+	if current_cost == FlowField.UNREACHABLE or current_cost == 0:
+		return current_cell
+
+	var best_cell: Vector2i = current_cell
+	var best_score: int = 2_000_000_000
+
+	for direction: Vector2i in FlowField.NEIGHBOR_DIRS:
+		var neighbor: Vector2i = current_cell + direction
+		if not flow_field.can_traverse(current_cell, neighbor):
+			continue
+		var neighbor_cost: int = flow_field.get_cost(neighbor)
+		if neighbor_cost >= current_cost:
+			continue
+
+		var occupancy: int = density[_cell_index(neighbor)]
+		var tie_break: int = _stable_jitter(agent_index, neighbor)
+		var score: int = neighbor_cost * path_weight + occupancy * density_weight + tie_break
+		if score < best_score:
+			best_score = score
+			best_cell = neighbor
+
+	return best_cell
+
+func _rebuild_density() -> void:
+	density.fill(0)
+	for position: Vector3 in positions:
+		var cell: Vector2i = grid.world_to_cell(position)
+		if grid.is_valid_cell(cell):
+			density[_cell_index(cell)] += 1
+
+func _stable_jitter(agent_index: int, cell: Vector2i) -> int:
+	var value: int = agent_index * 73856093
+	value ^= cell.x * 19349663
+	value ^= cell.y * 83492791
+	return absi(value) % 7
+
+func _cell_index(cell: Vector2i) -> int:
+	return cell.y * grid.cells_x + cell.x
 
 func _build_renderer() -> void:
 	var material: StandardMaterial3D = StandardMaterial3D.new()
@@ -67,7 +121,11 @@ func _build_renderer() -> void:
 
 func _spawn_agents() -> void:
 	positions.clear()
+	lane_offsets.clear()
 	positions.resize(maxi(agent_count, 0))
+	lane_offsets.resize(maxi(agent_count, 0))
+	var lane_extent: float = grid.cell_size * lane_offset_fraction
+
 	for index: int in range(positions.size()):
 		var offset_x: float = rng.randf_range(-spawn_extents.x, spawn_extents.x)
 		var offset_z: float = rng.randf_range(-spawn_extents.y, spawn_extents.y)
@@ -76,6 +134,10 @@ func _spawn_agents() -> void:
 		if not grid.is_valid_cell(cell) or grid.is_blocked(cell):
 			position = spawn_center
 		positions[index] = position
+		lane_offsets[index] = Vector2(
+			rng.randf_range(-lane_extent, lane_extent),
+			rng.randf_range(-lane_extent, lane_extent)
+		)
 
 func _upload_all_transforms() -> void:
 	for index: int in range(positions.size()):
