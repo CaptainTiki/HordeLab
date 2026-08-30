@@ -1,0 +1,71 @@
+[gd_scene load_steps=10 format=3]
+
+[ext_resource type="Script" path="res://scripts/rts_camera.gd" id="1_camera"]
+[ext_resource type="Script" path="res://scripts/selection_controller.gd" id="2_select"]
+[ext_resource type="Script" path="res://scripts/hero_scv.gd" id="3_hero"]
+
+[sub_resource type="PlaneMesh" id="Plane_ground"]
+size = Vector2(200, 200)
+
+[sub_resource type="BoxShape3D" id="Ground_shape"]
+size = Vector3(200, 0.2, 200)
+
+[sub_resource type="BoxMesh" id="Hero_mesh"]
+size = Vector3(1.6, 1.2, 2.2)
+
+[sub_resource type="BoxShape3D" id="Hero_shape"]
+size = Vector3(1.6, 1.2, 2.2)
+
+[sub_resource type="CylinderMesh" id="Selection_mesh"]
+top_radius = 1.5
+bottom_radius = 1.5
+height = 0.04
+radial_segments = 32
+
+[sub_resource type="StandardMaterial3D" id="Selection_material"]
+albedo_color = Color(0.9, 0.9, 0.2, 1)
+emission_enabled = true
+emission = Color(0.5, 0.5, 0.1, 1)
+
+[node name="Main" type="Node3D"]
+
+[node name="Ground" type="StaticBody3D" parent="."]
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Ground"]
+mesh = SubResource("Plane_ground")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Ground"]
+position = Vector3(0, -0.1, 0)
+shape = SubResource("Ground_shape")
+
+[node name="HeroSCV" type="CharacterBody3D" parent="."]
+position = Vector3(0, 0.6, 0)
+script = ExtResource("3_hero")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="HeroSCV"]
+mesh = SubResource("Hero_mesh")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="HeroSCV"]
+shape = SubResource("Hero_shape")
+
+[node name="SelectionMarker" type="MeshInstance3D" parent="HeroSCV"]
+position = Vector3(0, -0.58, 0)
+visible = false
+mesh = SubResource("Selection_mesh")
+material_override = SubResource("Selection_material")
+
+[node name="RTSCamera" type="Node3D" parent="."]
+script = ExtResource("1_camera")
+
+[node name="Camera3D" type="Camera3D" parent="RTSCamera"]
+current = true
+
+[node name="SelectionController" type="Node" parent="."]
+script = ExtResource("2_select")
+camera_path = NodePath("../RTSCamera/Camera3D")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+rotation_degrees = Vector3(-55, -30, 0)
+shadow_enabled = true
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
