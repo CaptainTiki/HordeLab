@@ -2,6 +2,7 @@ extends Node3D
 class_name HordeSimulation
 
 const INVALID_CELL: Vector2i = Vector2i(-1, -1)
+const MAX_AGENT_STEP_SECONDS: float = 0.15
 
 @export var grid_path: NodePath
 @export var flow_field_path: NodePath
@@ -25,12 +26,16 @@ var positions: Array[Vector3] = []
 var lane_offsets: Array[Vector2] = []
 var target_cells: Array[Vector2i] = []
 var agent_cells: Array[Vector2i] = []
+var last_update_usec: PackedInt64Array = PackedInt64Array()
 var density: PackedInt32Array = PackedInt32Array()
 var reservations: PackedInt32Array = PackedInt32Array()
 var work_accumulator: float = 0.0
 var next_agent_index: int = 0
 var agents_processed_last_frame: int = 0
 var last_simulation_ms: float = 0.0
+var effective_updates_per_second: float = 0.0
+var update_rate_accumulator: float = 0.0
+var updates_in_rate_window: int = 0
 var multimesh_instance: MultiMeshInstance3D
 var multimesh: MultiMesh
 var rng: RandomNumberGenerator = RandomNumberGenerator.new()
@@ -47,32 +52,50 @@ func _ready() -> void:
 	_upload_all_transforms()
 
 func _process(delta: float) -> void:
-	var tick_interval: float = 1.0 / maxf(simulation_hz, 1.0)
 	var desired_updates: float = float(agent_count) * simulation_hz * delta
 	work_accumulator += desired_updates
 
 	# Never allow an unlimited backlog to build up. If the renderer cannot keep
-	# pace with the requested simulation rate, the horde simulation slows down
-	# gracefully instead of creating a giant catch-up hitch.
+	# pace with the requested simulation rate, the scheduler intentionally lowers
+	# per-agent update frequency instead of creating a giant catch-up hitch.
 	work_accumulator = minf(work_accumulator, float(maxi(agent_count, 1)))
 
 	var requested_agents: int = floori(work_accumulator)
 	agents_processed_last_frame = mini(requested_agents, maxi(max_agents_per_frame, 1))
 	if agents_processed_last_frame <= 0:
 		last_simulation_ms = 0.0
+		_update_rate_stats(delta, 0)
 		return
 
 	work_accumulator -= float(agents_processed_last_frame)
 	reservations.fill(0)
 
-	var start_usec: int = Time.get_ticks_usec()
+	var frame_now_usec: int = Time.get_ticks_usec()
+	var start_usec: int = frame_now_usec
 	for processed: int in range(agents_processed_last_frame):
 		var agent_index: int = next_agent_index
 		next_agent_index += 1
 		if next_agent_index >= positions.size():
 			next_agent_index = 0
-		_simulate_agent(agent_index, tick_interval)
+		var previous_usec: int = last_update_usec[agent_index]
+		var elapsed_seconds: float = float(frame_now_usec - previous_usec) / 1_000_000.0
+		elapsed_seconds = clampf(elapsed_seconds, 0.0, MAX_AGENT_STEP_SECONDS)
+		last_update_usec[agent_index] = frame_now_usec
+		_simulate_agent(agent_index, elapsed_seconds)
 	last_simulation_ms = float(Time.get_ticks_usec() - start_usec) / 1000.0
+	_update_rate_stats(delta, agents_processed_last_frame)
+
+func _update_rate_stats(delta: float, updates: int) -> void:
+	update_rate_accumulator += delta
+	updates_in_rate_window += updates
+	if update_rate_accumulator < 0.5:
+		return
+	if agent_count > 0 and update_rate_accumulator > 0.0:
+		effective_updates_per_second = float(updates_in_rate_window) / float(agent_count) / update_rate_accumulator
+	else:
+		effective_updates_per_second = 0.0
+	update_rate_accumulator = 0.0
+	updates_in_rate_window = 0
 
 func _simulate_agent(index: int, step_delta: float) -> void:
 	var position: Vector3 = positions[index]
@@ -196,7 +219,9 @@ func _spawn_agents() -> void:
 	lane_offsets.resize(maxi(agent_count, 0))
 	target_cells.resize(maxi(agent_count, 0))
 	agent_cells.resize(maxi(agent_count, 0))
+	last_update_usec.resize(maxi(agent_count, 0))
 	var lane_extent: float = grid.cell_size * lane_offset_fraction
+	var initial_update_usec: int = Time.get_ticks_usec()
 
 	for index: int in range(positions.size()):
 		var offset_x: float = rng.randf_range(-spawn_extents.x, spawn_extents.x)
@@ -209,6 +234,7 @@ func _spawn_agents() -> void:
 		positions[index] = position
 		agent_cells[index] = cell
 		target_cells[index] = INVALID_CELL
+		last_update_usec[index] = initial_update_usec
 		lane_offsets[index] = Vector2(
 			rng.randf_range(-lane_extent, lane_extent),
 			rng.randf_range(-lane_extent, lane_extent)
