@@ -1,13 +1,15 @@
 extends Node3D
 class_name BattlefieldGrid
 
-@export var world_size := Vector2i(200, 200)
-@export var cell_size := 2.0
-@export var show_debug_grid := true
+signal grid_changed
 
-var cells_x: int
-var cells_z: int
-var blocked := PackedByteArray()
+@export var world_size: Vector2i = Vector2i(200, 200)
+@export var cell_size: float = 2.0
+@export var show_debug_grid: bool = true
+
+var cells_x: int = 0
+var cells_z: int = 0
+var blocked: PackedByteArray = PackedByteArray()
 
 func _ready() -> void:
 	cells_x = int(world_size.x / cell_size)
@@ -17,16 +19,16 @@ func _ready() -> void:
 		_build_debug_grid()
 
 func world_to_cell(world_position: Vector3) -> Vector2i:
-	var half_x := world_size.x * 0.5
-	var half_z := world_size.y * 0.5
+	var half_x: float = world_size.x * 0.5
+	var half_z: float = world_size.y * 0.5
 	return Vector2i(
 		floori((world_position.x + half_x) / cell_size),
 		floori((world_position.z + half_z) / cell_size)
 	)
 
 func cell_to_world(cell: Vector2i) -> Vector3:
-	var half_x := world_size.x * 0.5
-	var half_z := world_size.y * 0.5
+	var half_x: float = world_size.x * 0.5
+	var half_z: float = world_size.y * 0.5
 	return Vector3(
 		-half_x + (cell.x + 0.5) * cell_size,
 		0.02,
@@ -44,32 +46,37 @@ func is_blocked(cell: Vector2i) -> bool:
 func set_blocked(cell: Vector2i, value: bool) -> void:
 	if not is_valid_cell(cell):
 		return
-	blocked[cell.y * cells_x + cell.x] = 1 if value else 0
+	var index: int = cell.y * cells_x + cell.x
+	var new_value: int = 1 if value else 0
+	if blocked[index] == new_value:
+		return
+	blocked[index] = new_value
+	grid_changed.emit()
 
 func _build_debug_grid() -> void:
-	var mesh := ImmediateMesh.new()
-	var material := StandardMaterial3D.new()
+	var mesh: ImmediateMesh = ImmediateMesh.new()
+	var material: StandardMaterial3D = StandardMaterial3D.new()
 	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	material.albedo_color = Color(0.34, 0.38, 0.42, 0.42)
 	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 
 	mesh.surface_begin(Mesh.PRIMITIVE_LINES, material)
-	var half_x := world_size.x * 0.5
-	var half_z := world_size.y * 0.5
-	var y := 0.025
+	var half_x: float = world_size.x * 0.5
+	var half_z: float = world_size.y * 0.5
+	var y: float = 0.025
 
-	for x in range(cells_x + 1):
-		var world_x := -half_x + x * cell_size
+	for x: int in range(cells_x + 1):
+		var world_x: float = -half_x + x * cell_size
 		mesh.surface_add_vertex(Vector3(world_x, y, -half_z))
 		mesh.surface_add_vertex(Vector3(world_x, y, half_z))
 
-	for z in range(cells_z + 1):
-		var world_z := -half_z + z * cell_size
+	for z: int in range(cells_z + 1):
+		var world_z: float = -half_z + z * cell_size
 		mesh.surface_add_vertex(Vector3(-half_x, y, world_z))
 		mesh.surface_add_vertex(Vector3(half_x, y, world_z))
 
 	mesh.surface_end()
-	var instance := MeshInstance3D.new()
+	var instance: MeshInstance3D = MeshInstance3D.new()
 	instance.name = "DebugGrid"
 	instance.mesh = mesh
 	instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
