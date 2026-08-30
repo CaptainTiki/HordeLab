@@ -1,16 +1,27 @@
-[gd_scene load_steps=10 format=3]
+[gd_scene load_steps=13 format=3]
 
 [ext_resource type="Script" path="res://scripts/rts_camera.gd" id="1_camera"]
 [ext_resource type="Script" path="res://scripts/selection_controller.gd" id="2_select"]
 [ext_resource type="Script" path="res://scripts/hero_scv.gd" id="3_hero"]
+[ext_resource type="Script" path="res://scripts/battlefield_grid.gd" id="4_grid"]
+
+[sub_resource type="StandardMaterial3D" id="Ground_material"]
+albedo_color = Color(0.14, 0.16, 0.18, 1)
+roughness = 0.92
 
 [sub_resource type="PlaneMesh" id="Plane_ground"]
+material = SubResource("Ground_material")
 size = Vector2(200, 200)
 
 [sub_resource type="BoxShape3D" id="Ground_shape"]
 size = Vector3(200, 0.2, 200)
 
+[sub_resource type="StandardMaterial3D" id="Hero_material"]
+albedo_color = Color(0.72, 0.76, 0.82, 1)
+roughness = 0.7
+
 [sub_resource type="BoxMesh" id="Hero_mesh"]
+material = SubResource("Hero_material")
 size = Vector3(1.6, 1.2, 2.2)
 
 [sub_resource type="BoxShape3D" id="Hero_shape"]
@@ -23,9 +34,16 @@ height = 0.04
 radial_segments = 32
 
 [sub_resource type="StandardMaterial3D" id="Selection_material"]
-albedo_color = Color(0.9, 0.9, 0.2, 1)
+albedo_color = Color(1, 0.82, 0.08, 1)
 emission_enabled = true
-emission = Color(0.5, 0.5, 0.1, 1)
+emission = Color(0.45, 0.30, 0.02, 1)
+
+[sub_resource type="Environment" id="Environment_world"]
+background_mode = 1
+background_color = Color(0.055, 0.065, 0.08, 1)
+ambient_light_source = 3
+ambient_light_color = Color(0.42, 0.46, 0.52, 1)
+ambient_light_energy = 0.45
 
 [node name="Main" type="Node3D"]
 
@@ -37,6 +55,9 @@ mesh = SubResource("Plane_ground")
 [node name="CollisionShape3D" type="CollisionShape3D" parent="Ground"]
 position = Vector3(0, -0.1, 0)
 shape = SubResource("Ground_shape")
+
+[node name="BattlefieldGrid" type="Node3D" parent="."]
+script = ExtResource("4_grid")
 
 [node name="HeroSCV" type="CharacterBody3D" parent="."]
 position = Vector3(0, 0.6, 0)
@@ -66,6 +87,8 @@ camera_path = NodePath("../RTSCamera/Camera3D")
 
 [node name="Sun" type="DirectionalLight3D" parent="."]
 rotation_degrees = Vector3(-55, -30, 0)
+light_energy = 0.72
 shadow_enabled = true
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_world")
