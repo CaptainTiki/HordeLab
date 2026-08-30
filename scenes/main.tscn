@@ -108,7 +108,7 @@ goal_path = NodePath("../Goal")
 script = ExtResource("7_horde")
 grid_path = NodePath("../BattlefieldGrid")
 flow_field_path = NodePath("../FlowField")
-agent_count = 5000
+agent_count = 10000
 
 [node name="RTSCamera" type="Node3D" parent="."]
 script = ExtResource("1_camera")
@@ -143,16 +143,16 @@ offset_right = 1000.0
 offset_bottom = 52.0
 theme_override_colors/font_color = Color(0.9, 0.92, 0.95, 1)
 theme_override_font_sizes/font_size = 16
-text = "5000 MultiMesh agents   B: build walls   Left click: place   Right click/Esc: cancel   MMB drag: pan"
+text = "10000 MultiMesh agents   B: build walls   Left click: place   Right click/Esc: cancel   MMB drag: pan"
 
 [node name="DebugStats" type="Label" parent="HUD"]
 offset_left = 14.0
 offset_top = 42.0
-offset_right = 620.0
+offset_right = 980.0
 offset_bottom = 72.0
 theme_override_colors/font_color = Color(0.82, 0.88, 0.94, 1)
 theme_override_font_sizes/font_size = 16
-text = "FPS: --   Frame: -- ms   Horde: --   Flow: --"
+text = "FPS: --   Avg: -- ms   WORST: -- ms   Horde: --   Slice: -- ms / -- agents   Worst slice: -- ms   Flow: --   Last rebuild: --"
 script = ExtResource("8_debug")
 horde_path = NodePath("../../HordeSimulation")
 flow_field_path = NodePath("../../FlowField")
