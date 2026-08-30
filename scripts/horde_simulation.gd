@@ -5,6 +5,7 @@ const INVALID_CELL: Vector2i = Vector2i(-1, -1)
 const MAX_AGENT_STEP_SECONDS: float = 0.15
 const MAX_CELL_TRANSITIONS_PER_UPDATE: int = 4
 const MAX_PRESENTATION_EXTRAPOLATION_SECONDS: float = 0.18
+const PRESENTATION_RECONCILE_SECONDS: float = 0.10
 
 @export var grid_path: NodePath
 @export var flow_field_path: NodePath
@@ -29,6 +30,9 @@ var lane_offsets: Array[Vector2] = []
 var target_cells: Array[Vector2i] = []
 var agent_cells: Array[Vector2i] = []
 var last_update_usec: PackedInt64Array = PackedInt64Array()
+var presentation_velocities: Array[Vector3] = []
+var presentation_update_times: PackedFloat32Array = PackedFloat32Array()
+var presentation_extrapolation_limits: PackedFloat32Array = PackedFloat32Array()
 var density: PackedInt32Array = PackedInt32Array()
 var reservations: PackedInt32Array = PackedInt32Array()
 var work_accumulator: float = 0.0
@@ -116,6 +120,14 @@ func _simulate_agent(index: int, step_delta: float) -> void:
 	if current_cell == flow_field.goal_cell and target_cells[index] == INVALID_CELL:
 		return
 
+	# Capture where the GPU presentation should be right now before changing the
+	# authoritative transform. This lets us reconcile to the new truth without
+	# snapping backward from an extrapolated visual position.
+	var previous_velocity: Vector3 = presentation_velocities[index]
+	var visual_elapsed: float = presentation_time - presentation_update_times[index]
+	visual_elapsed = clampf(visual_elapsed, 0.0, presentation_extrapolation_limits[index])
+	var predicted_visual_position: Vector3 = old_position + previous_velocity * visual_elapsed
+
 	var remaining_distance: float = move_speed * step_delta
 	var transitions: int = 0
 
@@ -163,12 +175,27 @@ func _simulate_agent(index: int, step_delta: float) -> void:
 	if step_delta > 0.0001:
 		velocity = (position - old_position) / step_delta
 	var extrapolation_seconds: float = clampf(step_delta * 1.35, 0.03, MAX_PRESENTATION_EXTRAPOLATION_SECONDS)
+	var correction: Vector3 = predicted_visual_position - position
+
+	presentation_velocities[index] = velocity
+	presentation_update_times[index] = presentation_time
+	presentation_extrapolation_limits[index] = extrapolation_seconds
+
 	multimesh.set_instance_transform(index, Transform3D(Basis.IDENTITY, position))
+	# INSTANCE_CUSTOM: velocity.x, velocity.z, extrapolation limit, update time.
 	multimesh.set_instance_custom_data(index, Color(
 		velocity.x,
 		velocity.z,
 		extrapolation_seconds,
 		presentation_time
+	))
+	# INSTANCE_COLOR is presentation-only correction data. The shader decays this
+	# offset while continuing forward motion, preventing a visible snap backward.
+	multimesh.set_instance_color(index, Color(
+		correction.x,
+		correction.z,
+		PRESENTATION_RECONCILE_SECONDS,
+		1.0
 	))
 
 func _update_agent_cell(index: int, old_cell: Vector2i, new_cell: Vector2i) -> void:
@@ -245,9 +272,14 @@ uniform vec4 agent_color : source_color = vec4(0.88, 0.13, 0.10, 1.0);
 uniform float presentation_time = 0.0;
 
 void vertex() {
-	float elapsed = clamp(presentation_time - INSTANCE_CUSTOM.w, 0.0, INSTANCE_CUSTOM.z);
+	float elapsed = max(presentation_time - INSTANCE_CUSTOM.w, 0.0);
+	float extrapolated_elapsed = min(elapsed, INSTANCE_CUSTOM.z);
 	vec2 velocity = INSTANCE_CUSTOM.xy;
-	VERTEX += vec3(velocity.x, 0.0, velocity.y) * elapsed;
+	float reconcile_duration = max(INSTANCE_COLOR.z, 0.001);
+	float reconcile = 1.0 - clamp(elapsed / reconcile_duration, 0.0, 1.0);
+	vec2 correction = INSTANCE_COLOR.xy * reconcile;
+	vec2 presentation_offset = velocity * extrapolated_elapsed + correction;
+	VERTEX += vec3(presentation_offset.x, 0.0, presentation_offset.y);
 }
 
 void fragment() {
@@ -269,6 +301,7 @@ void fragment() {
 	multimesh = MultiMesh.new()
 	multimesh.transform_format = MultiMesh.TRANSFORM_3D
 	multimesh.use_custom_data = true
+	multimesh.use_colors = true
 	multimesh.instance_count = maxi(agent_count, 0)
 	multimesh.mesh = mesh
 
@@ -283,11 +316,15 @@ func _spawn_agents() -> void:
 	lane_offsets.clear()
 	target_cells.clear()
 	agent_cells.clear()
+	presentation_velocities.clear()
 	positions.resize(maxi(agent_count, 0))
 	lane_offsets.resize(maxi(agent_count, 0))
 	target_cells.resize(maxi(agent_count, 0))
 	agent_cells.resize(maxi(agent_count, 0))
+	presentation_velocities.resize(maxi(agent_count, 0))
 	last_update_usec.resize(maxi(agent_count, 0))
+	presentation_update_times.resize(maxi(agent_count, 0))
+	presentation_extrapolation_limits.resize(maxi(agent_count, 0))
 	var lane_extent: float = grid.cell_size * lane_offset_fraction
 	var initial_update_usec: int = Time.get_ticks_usec()
 
@@ -303,6 +340,9 @@ func _spawn_agents() -> void:
 		agent_cells[index] = cell
 		target_cells[index] = INVALID_CELL
 		last_update_usec[index] = initial_update_usec
+		presentation_velocities[index] = Vector3.ZERO
+		presentation_update_times[index] = presentation_time
+		presentation_extrapolation_limits[index] = 0.0
 		lane_offsets[index] = Vector2(
 			rng.randf_range(-lane_extent, lane_extent),
 			rng.randf_range(-lane_extent, lane_extent)
@@ -312,3 +352,4 @@ func _upload_all_transforms() -> void:
 	for index: int in range(positions.size()):
 		multimesh.set_instance_transform(index, Transform3D(Basis.IDENTITY, positions[index]))
 		multimesh.set_instance_custom_data(index, Color(0.0, 0.0, 0.0, presentation_time))
+		multimesh.set_instance_color(index, Color(0.0, 0.0, PRESENTATION_RECONCILE_SECONDS, 1.0))
