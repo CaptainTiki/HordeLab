@@ -19,6 +19,8 @@ var integration: PackedInt32Array = PackedInt32Array()
 var goal_cell: Vector2i = Vector2i(-1, -1)
 
 func _ready() -> void:
+	if not grid.is_node_ready():
+		await grid.ready
 	integration.resize(grid.cells_x * grid.cells_z)
 	grid.grid_changed.connect(_rebuild)
 	_rebuild()
