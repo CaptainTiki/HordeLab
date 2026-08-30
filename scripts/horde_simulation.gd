@@ -51,16 +51,16 @@ func _process(delta: float) -> void:
 	for index: int in range(positions.size()):
 		var position: Vector3 = positions[index]
 		var current_cell: Vector2i = grid.world_to_cell(position)
-		if current_cell == flow_field.goal_cell:
+		if current_cell == flow_field.goal_cell and target_cells[index] == INVALID_CELL:
 			multimesh.set_instance_transform(index, Transform3D(Basis.IDENTITY, position))
 			continue
 
 		var target_cell: Vector2i = target_cells[index]
-		if target_cell == INVALID_CELL or not flow_field.can_traverse(current_cell, target_cell):
+		if target_cell == INVALID_CELL or not _target_is_still_valid(current_cell, target_cell):
 			target_cell = _choose_next_cell(index, current_cell)
 			target_cells[index] = target_cell
 
-		if target_cell != current_cell:
+		if target_cell != INVALID_CELL and target_cell != current_cell or target_cell == current_cell:
 			var target: Vector3 = grid.cell_to_world(target_cell)
 			var lane_offset: Vector2 = lane_offsets[index]
 			target.x += lane_offset.x
@@ -68,15 +68,24 @@ func _process(delta: float) -> void:
 			target.y = position.y
 			var offset: Vector3 = target - position
 			var distance: float = offset.length()
+
 			if distance <= target_arrival_distance:
 				position = target
+				positions[index] = position
 				target_cells[index] = INVALID_CELL
 			elif distance > 0.001:
 				var step: float = minf(max_step, distance)
 				position += offset / distance * step
-			positions[index] = position
+				positions[index] = position
 
 		multimesh.set_instance_transform(index, Transform3D(Basis.IDENTITY, position))
+
+func _target_is_still_valid(current_cell: Vector2i, target_cell: Vector2i) -> bool:
+	if not grid.is_valid_cell(target_cell) or grid.is_blocked(target_cell):
+		return false
+	if current_cell == target_cell:
+		return true
+	return flow_field.can_traverse(current_cell, target_cell)
 
 func _choose_next_cell(agent_index: int, current_cell: Vector2i) -> Vector2i:
 	var current_cost: int = flow_field.get_cost(current_cell)
