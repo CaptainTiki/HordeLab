@@ -1,4 +1,4 @@
-[gd_scene load_steps=20 format=3]
+[gd_scene load_steps=18 format=3]
 
 [ext_resource type="Script" path="res://scripts/rts_camera.gd" id="1_camera"]
 [ext_resource type="Script" path="res://scripts/selection_controller.gd" id="2_select"]
@@ -6,7 +6,7 @@
 [ext_resource type="Script" path="res://scripts/battlefield_grid.gd" id="4_grid"]
 [ext_resource type="Script" path="res://scripts/build_controller.gd" id="5_build"]
 [ext_resource type="Script" path="res://scripts/flow_field.gd" id="6_flow"]
-[ext_resource type="Script" path="res://scripts/flow_agent.gd" id="7_agent"]
+[ext_resource type="Script" path="res://scripts/horde_simulation.gd" id="7_horde"]
 
 [sub_resource type="StandardMaterial3D" id="Ground_material"]
 albedo_color = Color(0.14, 0.16, 0.18, 1)
@@ -52,17 +52,6 @@ top_radius = 2.0
 bottom_radius = 2.0
 height = 1.0
 radial_segments = 24
-
-[sub_resource type="StandardMaterial3D" id="Agent_material"]
-albedo_color = Color(0.9, 0.16, 0.12, 1)
-roughness = 0.65
-
-[sub_resource type="CapsuleMesh" id="Agent_mesh"]
-material = SubResource("Agent_material")
-radius = 0.55
-height = 1.8
-radial_segments = 12
-rings = 4
 
 [sub_resource type="Environment" id="Environment_world"]
 background_mode = 1
@@ -114,14 +103,11 @@ script = ExtResource("6_flow")
 grid_path = NodePath("../BattlefieldGrid")
 goal_path = NodePath("../Goal")
 
-[node name="TestAgent" type="Node3D" parent="."]
-position = Vector3(-56, 0.9, -30)
-script = ExtResource("7_agent")
+[node name="HordeSimulation" type="Node3D" parent="."]
+script = ExtResource("7_horde")
 grid_path = NodePath("../BattlefieldGrid")
 flow_field_path = NodePath("../FlowField")
-
-[node name="MeshInstance3D" type="MeshInstance3D" parent="TestAgent"]
-mesh = SubResource("Agent_mesh")
+agent_count = 1000
 
 [node name="RTSCamera" type="Node3D" parent="."]
 script = ExtResource("1_camera")
@@ -152,8 +138,8 @@ environment = SubResource("Environment_world")
 [node name="Instructions" type="Label" parent="HUD"]
 offset_left = 14.0
 offset_top = 12.0
-offset_right = 760.0
+offset_right = 900.0
 offset_bottom = 52.0
 theme_override_colors/font_color = Color(0.9, 0.92, 0.95, 1)
 theme_override_font_sizes/font_size = 16
-text = "RED capsule follows flow field to BLUE goal   B: build walls   Left click: place   Right click/Esc: cancel   MMB drag: pan"
+text = "1000 MultiMesh agents follow ONE shared flow field   B: build walls   Left click: place   Right click/Esc: cancel   MMB drag: pan"
