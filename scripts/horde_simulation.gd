@@ -3,8 +3,7 @@ class_name HordeSimulation
 
 const INVALID_CELL: Vector2i = Vector2i(-1, -1)
 const MAX_AGENT_STEP_SECONDS: float = 0.15
-const MIN_PRESENTATION_SECONDS: float = 0.016
-const MAX_PRESENTATION_SECONDS: float = 0.15
+const MAX_CELL_TRANSITIONS_PER_UPDATE: int = 4
 
 @export var grid_path: NodePath
 @export var flow_field_path: NodePath
@@ -84,21 +83,20 @@ func _process(delta: float) -> void:
 		next_agent_index += 1
 		if next_agent_index >= positions.size():
 			next_agent_index = 0
+
 		var previous_usec: int = last_update_usec[agent_index]
 		var elapsed_seconds: float = float(frame_now_usec - previous_usec) / 1_000_000.0
 		elapsed_seconds = clampf(elapsed_seconds, 0.0, MAX_AGENT_STEP_SECONDS)
 		last_update_usec[agent_index] = frame_now_usec
 		_simulate_agent(agent_index, elapsed_seconds)
+
 	last_simulation_ms = float(Time.get_ticks_usec() - start_usec) / 1000.0
 	_update_rate_stats(delta, agents_processed_last_frame)
 
 func _update_presentation_shader() -> void:
 	if presentation_material == null:
 		return
-	var presentation_seconds: float = 1.0 / maxf(effective_updates_per_second, 1.0)
-	presentation_seconds = clampf(presentation_seconds, MIN_PRESENTATION_SECONDS, MAX_PRESENTATION_SECONDS)
 	presentation_material.set_shader_parameter("presentation_time", presentation_time)
-	presentation_material.set_shader_parameter("interpolation_duration", presentation_seconds)
 
 func _update_rate_stats(delta: float, updates: int) -> void:
 	update_rate_accumulator += delta
@@ -115,42 +113,69 @@ func _update_rate_stats(delta: float, updates: int) -> void:
 func _simulate_agent(index: int, step_delta: float) -> void:
 	var old_position: Vector3 = positions[index]
 	var position: Vector3 = old_position
-	var current_cell: Vector2i = agent_cells[index]
+	var starting_cell: Vector2i = agent_cells[index]
+	var current_cell: Vector2i = starting_cell
+
 	if current_cell == flow_field.goal_cell and target_cells[index] == INVALID_CELL:
 		return
 
-	var target_cell: Vector2i = target_cells[index]
-	if target_cell == INVALID_CELL or not _target_is_still_valid(current_cell, target_cell):
-		target_cell = _choose_next_cell(index, current_cell)
-		target_cells[index] = target_cell
+	var remaining_distance: float = move_speed * step_delta
+	var transitions: int = 0
 
-	var target: Vector3 = grid.cell_to_world(target_cell)
-	var lane_offset: Vector2 = lane_offsets[index]
-	target.x += lane_offset.x
-	target.z += lane_offset.y
-	target.y = position.y
-	var offset: Vector3 = target - position
-	var distance: float = offset.length()
+	# Consume the full movement budget. Reaching a cell target must not cost an
+	# entire scheduler update, otherwise low update rates create a visible pause
+	# at every grid cell boundary.
+	while remaining_distance > 0.0001 and transitions < MAX_CELL_TRANSITIONS_PER_UPDATE:
+		if current_cell == flow_field.goal_cell and target_cells[index] == INVALID_CELL:
+			break
 
-	if distance <= target_arrival_distance:
-		position = target
-		target_cells[index] = INVALID_CELL
-	elif distance > 0.001:
-		var move_step: float = minf(move_speed * step_delta, distance)
+		var target_cell: Vector2i = target_cells[index]
+		if target_cell == INVALID_CELL or not _target_is_still_valid(current_cell, target_cell):
+			target_cell = _choose_next_cell(index, current_cell)
+			target_cells[index] = target_cell
+
+		var target: Vector3 = grid.cell_to_world(target_cell)
+		var lane_offset: Vector2 = lane_offsets[index]
+		target.x += lane_offset.x
+		target.z += lane_offset.y
+		target.y = position.y
+
+		var offset: Vector3 = target - position
+		var distance: float = offset.length()
+
+		if distance <= target_arrival_distance:
+			position = target
+			target_cells[index] = INVALID_CELL
+			current_cell = grid.world_to_cell(position)
+			transitions += 1
+			continue
+
+		var move_step: float = minf(remaining_distance, distance)
 		position += offset / distance * move_step
+		remaining_distance -= move_step
+		current_cell = grid.world_to_cell(position)
+
+		if move_step >= distance - 0.0001:
+			position = target
+			current_cell = grid.world_to_cell(position)
+			target_cells[index] = INVALID_CELL
+			transitions += 1
+			continue
+
+		break
 
 	positions[index] = position
-	_update_agent_cell(index, current_cell, grid.world_to_cell(position))
+	_update_agent_cell(index, starting_cell, current_cell)
 
-	# The simulation moves in scheduled chunks, but presentation is interpolated
-	# entirely on the GPU. The instance transform is the newest authoritative
-	# position; custom data stores the offset back to the previous position plus
-	# the presentation timestamp when this simulation update occurred.
+	# Presentation is delayed/smoothed entirely on the GPU. INSTANCE_CUSTOM uses:
+	# x/z = offset back to the previous authoritative position
+	# y   = this agent's actual time between simulation updates
+	# w   = presentation timestamp of this update
 	var presentation_offset: Vector3 = old_position - position
 	multimesh.set_instance_transform(index, Transform3D(Basis.IDENTITY, position))
 	multimesh.set_instance_custom_data(index, Color(
 		presentation_offset.x,
-		presentation_offset.y,
+		clampf(step_delta, 0.016, MAX_AGENT_STEP_SECONDS),
 		presentation_offset.z,
 		presentation_time
 	))
@@ -222,13 +247,11 @@ shader_type spatial;
 
 uniform vec4 agent_color : source_color = vec4(0.88, 0.13, 0.10, 1.0);
 uniform float presentation_time = 0.0;
-uniform float interpolation_duration = 0.1;
 
 void vertex() {
-	float duration = max(interpolation_duration, 0.001);
+	float duration = clamp(INSTANCE_CUSTOM.y, 0.016, 0.15);
 	float progress = clamp((presentation_time - INSTANCE_CUSTOM.w) / duration, 0.0, 1.0);
-	float smooth_progress = progress * progress * (3.0 - 2.0 * progress);
-	VERTEX += INSTANCE_CUSTOM.xyz * (1.0 - smooth_progress);
+	VERTEX += vec3(INSTANCE_CUSTOM.x, 0.0, INSTANCE_CUSTOM.z) * (1.0 - progress);
 }
 
 void fragment() {
@@ -292,4 +315,4 @@ func _spawn_agents() -> void:
 func _upload_all_transforms() -> void:
 	for index: int in range(positions.size()):
 		multimesh.set_instance_transform(index, Transform3D(Basis.IDENTITY, positions[index]))
-		multimesh.set_instance_custom_data(index, Color(0.0, 0.0, 0.0, presentation_time))
+		multimesh.set_instance_custom_data(index, Color(0.0, 1.0 / maxf(simulation_hz, 1.0), 0.0, presentation_time))
