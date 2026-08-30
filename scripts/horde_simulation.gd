@@ -7,6 +7,7 @@ const INVALID_CELL: Vector2i = Vector2i(-1, -1)
 @export var flow_field_path: NodePath
 @export var agent_count: int = 1000
 @export var move_speed: float = 6.0
+@export var simulation_hz: float = 30.0
 @export var spawn_center: Vector3 = Vector3(-58.0, 0.75, -30.0)
 @export var spawn_extents: Vector2 = Vector2(16.0, 20.0)
 @export var agent_radius: float = 0.32
@@ -26,6 +27,8 @@ var target_cells: Array[Vector2i] = []
 var density: PackedInt32Array = PackedInt32Array()
 var reservations: PackedInt32Array = PackedInt32Array()
 var density_timer: float = 0.0
+var simulation_accumulator: float = 0.0
+var last_simulation_ms: float = 0.0
 var multimesh_instance: MultiMeshInstance3D
 var multimesh: MultiMesh
 var rng: RandomNumberGenerator = RandomNumberGenerator.new()
@@ -42,12 +45,25 @@ func _ready() -> void:
 	_upload_all_transforms()
 
 func _process(delta: float) -> void:
-	density_timer += delta
+	var tick_interval: float = 1.0 / maxf(simulation_hz, 1.0)
+	simulation_accumulator += delta
+	if simulation_accumulator < tick_interval:
+		return
+
+	# Never run an unbounded catch-up loop after a slow frame. One horde tick per
+	# rendered frame is the maximum; excess accumulated time is discarded.
+	simulation_accumulator = fmod(simulation_accumulator, tick_interval)
+	var start_usec: int = Time.get_ticks_usec()
+	_simulate_tick(tick_interval)
+	last_simulation_ms = float(Time.get_ticks_usec() - start_usec) / 1000.0
+
+func _simulate_tick(step_delta: float) -> void:
+	density_timer += step_delta
 	if density_timer >= density_update_interval:
 		density_timer = fmod(density_timer, density_update_interval)
 		_rebuild_density()
 
-	var max_step: float = move_speed * delta
+	var max_step: float = move_speed * step_delta
 	for index: int in range(positions.size()):
 		var position: Vector3 = positions[index]
 		var current_cell: Vector2i = grid.world_to_cell(position)
@@ -60,23 +76,22 @@ func _process(delta: float) -> void:
 			target_cell = _choose_next_cell(index, current_cell)
 			target_cells[index] = target_cell
 
-		if target_cell != INVALID_CELL and target_cell != current_cell or target_cell == current_cell:
-			var target: Vector3 = grid.cell_to_world(target_cell)
-			var lane_offset: Vector2 = lane_offsets[index]
-			target.x += lane_offset.x
-			target.z += lane_offset.y
-			target.y = position.y
-			var offset: Vector3 = target - position
-			var distance: float = offset.length()
+		var target: Vector3 = grid.cell_to_world(target_cell)
+		var lane_offset: Vector2 = lane_offsets[index]
+		target.x += lane_offset.x
+		target.z += lane_offset.y
+		target.y = position.y
+		var offset: Vector3 = target - position
+		var distance: float = offset.length()
 
-			if distance <= target_arrival_distance:
-				position = target
-				positions[index] = position
-				target_cells[index] = INVALID_CELL
-			elif distance > 0.001:
-				var step: float = minf(max_step, distance)
-				position += offset / distance * step
-				positions[index] = position
+		if distance <= target_arrival_distance:
+			position = target
+			positions[index] = position
+			target_cells[index] = INVALID_CELL
+		elif distance > 0.001:
+			var move_step: float = minf(max_step, distance)
+			position += offset / distance * move_step
+			positions[index] = position
 
 		multimesh.set_instance_transform(index, Transform3D(Basis.IDENTITY, position))
 
