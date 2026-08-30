@@ -1,4 +1,4 @@
-[gd_scene load_steps=18 format=3]
+[gd_scene load_steps=19 format=3]
 
 [ext_resource type="Script" path="res://scripts/rts_camera.gd" id="1_camera"]
 [ext_resource type="Script" path="res://scripts/selection_controller.gd" id="2_select"]
@@ -7,6 +7,7 @@
 [ext_resource type="Script" path="res://scripts/build_controller.gd" id="5_build"]
 [ext_resource type="Script" path="res://scripts/flow_field.gd" id="6_flow"]
 [ext_resource type="Script" path="res://scripts/horde_simulation.gd" id="7_horde"]
+[ext_resource type="Script" path="res://scripts/debug_hud.gd" id="8_debug"]
 
 [sub_resource type="StandardMaterial3D" id="Ground_material"]
 albedo_color = Color(0.14, 0.16, 0.18, 1)
@@ -143,3 +144,14 @@ offset_bottom = 52.0
 theme_override_colors/font_color = Color(0.9, 0.92, 0.95, 1)
 theme_override_font_sizes/font_size = 16
 text = "1000 MultiMesh agents follow ONE shared flow field   B: build walls   Left click: place   Right click/Esc: cancel   MMB drag: pan"
+
+[node name="DebugStats" type="Label" parent="HUD"]
+offset_left = 14.0
+offset_top = 42.0
+offset_right = 340.0
+offset_bottom = 72.0
+theme_override_colors/font_color = Color(0.82, 0.88, 0.94, 1)
+theme_override_font_sizes/font_size = 16
+text = "FPS: --   Horde: --"
+script = ExtResource("8_debug")
+horde_path = NodePath("../../HordeSimulation")
