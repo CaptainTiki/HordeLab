@@ -26,6 +26,10 @@ var frontier: Array[Vector2i] = []
 var frontier_read_index: int = 0
 var goal_cell: Vector2i = Vector2i(-1, -1)
 var rebuild_in_progress: bool = false
+var last_rebuild_ms: float = 0.0
+var last_rebuild_frames: int = 0
+var rebuild_frame_count: int = 0
+var rebuild_start_usec: int = 0
 
 func _ready() -> void:
 	if not grid.is_node_ready():
@@ -40,6 +44,7 @@ func _ready() -> void:
 
 func _process(_delta: float) -> void:
 	if rebuild_in_progress:
+		rebuild_frame_count += 1
 		_process_rebuild_budget()
 
 func _begin_rebuild() -> void:
@@ -47,10 +52,14 @@ func _begin_rebuild() -> void:
 	pending_integration.fill(UNREACHABLE)
 	frontier.clear()
 	frontier_read_index = 0
+	rebuild_frame_count = 0
+	rebuild_start_usec = Time.get_ticks_usec()
 
 	if not grid.is_valid_cell(goal_cell) or grid.is_blocked(goal_cell):
 		integration.fill(UNREACHABLE)
 		rebuild_in_progress = false
+		last_rebuild_ms = 0.0
+		last_rebuild_frames = 0
 		return
 
 	frontier.append(goal_cell)
@@ -80,6 +89,8 @@ func _process_rebuild_budget() -> void:
 	if frontier_read_index >= frontier.size():
 		integration = pending_integration.duplicate()
 		rebuild_in_progress = false
+		last_rebuild_frames = rebuild_frame_count
+		last_rebuild_ms = float(Time.get_ticks_usec() - rebuild_start_usec) / 1000.0
 
 func get_cost(cell: Vector2i) -> int:
 	if not grid.is_valid_cell(cell):
