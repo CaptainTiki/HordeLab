@@ -1,9 +1,10 @@
-[gd_scene load_steps=13 format=3]
+[gd_scene load_steps=14 format=3]
 
 [ext_resource type="Script" path="res://scripts/rts_camera.gd" id="1_camera"]
 [ext_resource type="Script" path="res://scripts/selection_controller.gd" id="2_select"]
 [ext_resource type="Script" path="res://scripts/hero_scv.gd" id="3_hero"]
 [ext_resource type="Script" path="res://scripts/battlefield_grid.gd" id="4_grid"]
+[ext_resource type="Script" path="res://scripts/build_controller.gd" id="5_build"]
 
 [sub_resource type="StandardMaterial3D" id="Ground_material"]
 albedo_color = Color(0.14, 0.16, 0.18, 1)
@@ -81,9 +82,15 @@ script = ExtResource("1_camera")
 [node name="Camera3D" type="Camera3D" parent="RTSCamera"]
 current = true
 
+[node name="BuildController" type="Node3D" parent="."]
+script = ExtResource("5_build")
+camera_path = NodePath("../RTSCamera/Camera3D")
+grid_path = NodePath("../BattlefieldGrid")
+
 [node name="SelectionController" type="Node" parent="."]
 script = ExtResource("2_select")
 camera_path = NodePath("../RTSCamera/Camera3D")
+build_controller_path = NodePath("../BuildController")
 
 [node name="Sun" type="DirectionalLight3D" parent="."]
 rotation_degrees = Vector3(-55, -30, 0)
@@ -92,3 +99,14 @@ shadow_enabled = true
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="."]
 environment = SubResource("Environment_world")
+
+[node name="HUD" type="CanvasLayer" parent="."]
+
+[node name="Instructions" type="Label" parent="HUD"]
+offset_left = 14.0
+offset_top = 12.0
+offset_right = 520.0
+offset_bottom = 52.0
+theme_override_colors/font_color = Color(0.9, 0.92, 0.95, 1)
+theme_override_font_sizes/font_size = 16
+text = "B: wall build mode   Left click: place   Right click/Esc: cancel   MMB drag: pan"

@@ -1,11 +1,15 @@
 extends Node
 
 @export var camera_path: NodePath
+@export var build_controller_path: NodePath
 
 @onready var camera: Camera3D = get_node(camera_path)
+@onready var build_controller: Node = get_node(build_controller_path)
 var selected_unit: Node = null
 
 func _unhandled_input(event: InputEvent) -> void:
+	if build_controller != null and build_controller.get("placement_active") == true:
+		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 		_select_at_screen_position(event.position)
 
